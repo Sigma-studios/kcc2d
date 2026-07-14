@@ -1,0 +1,26 @@
+[package]
+name = "kcc2d"
+description = "A reusable 2D kinematic character controller for Bevy, built on avian2d."
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.19", default-features = false, features = ["2d"] }
+avian2d = { version = "0.7", default-features = false, features = [
+    "2d",
+    "f32",
+    "parry-f32",
+] }
+
+[features]
+# Enables the gizmo + on-screen readout debug plugin (`KccDebugPlugin`).
+debug = ["bevy/bevy_ui", "bevy/default_font"]
+
+[[example]]
+name = "playground"
+# The playground showcases the controller with the debug overlay enabled.
+required-features = ["debug"]
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
