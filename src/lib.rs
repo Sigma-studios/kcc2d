@@ -17,20 +17,56 @@
 //! (collider, velocity, probe casts, and a live text readout).
 
 use avian2d::{math::*, prelude::*};
+use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel};
 use bevy::prelude::*;
+
+/// Shorthand for the `serde` feature's derive, so each type carries one attribute instead of two.
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "debug")]
 mod debug;
 #[cfg(feature = "debug")]
 pub use debug::{KccDebug, KccDebugPlugin};
 
-/// System set containing every controller system. Runs in [`FixedUpdate`]. Order your own
-/// input-writing systems before this set and animation/read systems after it.
+/// System set containing every controller system, in whichever schedule [`KccPlugin`] was given.
+/// Order your own input-writing systems before this set and animation/read systems after it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KccSet;
 
 /// Plugin that registers the controller components and systems.
-pub struct KccPlugin;
+///
+/// Defaults to [`FixedUpdate`], which is the classic fixed-timestep placement. Construct it with
+/// [`KccPlugin::new`] to run the controller in another schedule — a rollback simulation owns its
+/// own, re-runs it many times per frame while replaying, and cannot use `FixedUpdate` at all:
+///
+/// ```rust,ignore
+/// app.add_plugins(KccPlugin::new(TickedSimulation));
+/// // and, so the controller still runs before the physics step as it does under FixedUpdate:
+/// app.configure_sets(TickedSimulation, KccSet.in_set(PhysicsSystems::First));
+/// ```
+///
+/// The controller reads `Res<Time>` for its timestep, so whatever installs the schedule is
+/// responsible for installing a clock: `bevy_ticked`'s `run_tick_schedule` does exactly this,
+/// rebuilding the clock from the tick counter so a replayed tick reproduces its original delta.
+pub struct KccPlugin {
+    schedule: InternedScheduleLabel,
+}
+
+impl KccPlugin {
+    /// Run the controller in `schedule` instead of [`FixedUpdate`].
+    pub fn new(schedule: impl ScheduleLabel) -> Self {
+        Self {
+            schedule: schedule.intern(),
+        }
+    }
+}
+
+impl Default for KccPlugin {
+    fn default() -> Self {
+        Self::new(FixedUpdate)
+    }
+}
 
 impl Plugin for KccPlugin {
     fn build(&self, app: &mut App) {
@@ -40,7 +76,7 @@ impl Plugin for KccPlugin {
             .register_type::<Side>();
 
         app.add_systems(
-            FixedUpdate,
+            self.schedule,
             (
                 detect_contacts,
                 tick_timers,
@@ -62,6 +98,7 @@ impl Plugin for KccPlugin {
 
 /// Which side of the character something is on (a wall) or which way it faces.
 #[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Side {
     Left,
     #[default]
@@ -100,9 +137,14 @@ pub struct KinematicController;
 /// (for the pixel game, 1 unit = 1 pixel).
 #[derive(Component, Reflect, Debug, Clone)]
 #[reflect(Component)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ControllerConfig {
     /// Half-extents of the character's collider box. Used to size the detection probes.
     pub half_extents: Vector,
+    /// Which [`CollisionLayers`] memberships count as solid for the controller's ground/wall/
+    /// move-and-slide probes. Defaults to every layer; narrow it to make the character ignore
+    /// props (pickups, decorations) that are on their own layer.
+    pub mask: LayerMask,
     /// Maximum horizontal speed reachable from input.
     pub max_speed: Scalar,
     /// Horizontal acceleration toward the input target speed.
@@ -157,6 +199,7 @@ impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
             half_extents: Vector::new(1.0, 3.5),
+            mask: LayerMask::ALL,
             max_speed: 60.0,
             accel: 600.0,
             ground_friction: 700.0,
@@ -187,6 +230,7 @@ impl Default for ControllerConfig {
 /// controller in [`FixedUpdate`].
 #[derive(Component, Reflect, Debug, Clone, Default)]
 #[reflect(Component)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ControllerInput {
     /// Desired horizontal movement in `-1.0..=1.0`.
     pub move_x: Scalar,
@@ -203,6 +247,7 @@ pub struct ControllerInput {
 /// animation and gameplay logic.
 #[derive(Component, Reflect, Debug, Clone)]
 #[reflect(Component)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ControllerState {
     /// Current velocity (mirrors the body's [`LinearVelocity`]).
     pub velocity: Vector,
@@ -263,6 +308,38 @@ impl ControllerState {
     }
 }
 
+/// The body's simulation position.
+///
+/// Avian's [`Position`] is the authority when the entity has one, and [`Transform`] is only a
+/// render-space copy of it — so a controller that reads and writes `Transform` instead is reading
+/// a value that a rollback network never restores. Snapshots carry `Position`; the stale
+/// `Transform` left over from a mispredicted tick is what the controller would move away from,
+/// and the correction is lost before anything can act on it.
+///
+/// Falling back to `Transform` keeps the controller usable without avian's `Position` at all,
+/// which is what it did before.
+fn body_position(position: Option<&Position>, transform: &Transform) -> Vector {
+    match position {
+        Some(position) => position.0,
+        None => transform.translation.xy().adjust_precision(),
+    }
+}
+
+/// Writes the body's simulation position back, mirroring [`body_position`].
+///
+/// Writing `Position` unconditionally — every tick, moving or not — is deliberate: avian's
+/// `transform_to_position` copies `Transform` onto `Position` only for bodies whose `Position`
+/// was *not* touched since the last physics tick, so a controller that always writes it can never
+/// have a render-space value copied back over the simulation.
+fn set_body_position(position: Option<Mut<Position>>, transform: &mut Transform, value: Vector) {
+    match position {
+        Some(mut position) => position.0 = value,
+        None => {
+            transform.translation = value.f32().extend(transform.translation.z);
+        }
+    }
+}
+
 /// Moves `current` toward `target` by at most `max_delta`.
 fn approach(current: Scalar, target: Scalar, max_delta: Scalar) -> Scalar {
     if current < target {
@@ -299,15 +376,24 @@ impl ControllerConfig {
 
 /// Shape-casts to update grounded/ground-normal and wall side in [`ControllerState`].
 fn detect_contacts(
-    mut query: Query<(Entity, &ControllerConfig, &Transform, &mut ControllerState), With<KinematicController>>,
+    mut query: Query<
+        (
+            Entity,
+            &ControllerConfig,
+            Option<&Position>,
+            &Transform,
+            &mut ControllerState,
+        ),
+        With<KinematicController>,
+    >,
     spatial_query: SpatialQuery,
 ) {
-    for (entity, cfg, transform, mut state) in &mut query {
-        // Probe from the current (possibly ducked) box centre; the transform is the standing
+    for (entity, cfg, position, transform, mut state) in &mut query {
+        // Probe from the current (possibly ducked) box centre; the body position is the standing
         // centre, so shift down by the pose offset while ducked.
-        let origin = transform.translation.xy().adjust_precision()
-            + Vector::Y * cfg.pose_offset(state.ducked());
-        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+        let origin =
+            body_position(position, transform) + Vector::Y * cfg.pose_offset(state.ducked());
+        let filter = SpatialQueryFilter::from_excluded_entities([entity]).with_mask(cfg.mask);
         let config = ShapeCastConfig::from_max_distance(cfg.probe_distance);
 
         // Build probes from the current pose so detection matches the (possibly ducked) body.
@@ -377,11 +463,19 @@ fn tick_timers(time: Res<Time>, mut query: Query<(&ControllerConfig, &mut Contro
 fn update_pose(
     spatial_query: SpatialQuery,
     mut query: Query<
-        (Entity, &ControllerConfig, &ControllerInput, &LinearVelocity, &mut ControllerState, &Transform),
+        (
+            Entity,
+            &ControllerConfig,
+            &ControllerInput,
+            &LinearVelocity,
+            &mut ControllerState,
+            Option<&Position>,
+            &Transform,
+        ),
         With<KinematicController>,
     >,
 ) {
-    for (entity, cfg, input, vel, mut state, transform) in &mut query {
+    for (entity, cfg, input, vel, mut state, position, transform) in &mut query {
         // Edge-detect crouch: a slide only starts on the press, not while merely held.
         let crouch_pressed = input.crouch && !state.prev_crouch;
         state.prev_crouch = input.crouch;
@@ -395,8 +489,8 @@ fn update_pose(
                 (cfg.half_extents.x - 0.1).max(0.05) * 2.0,
                 (cfg.half_extents.y - 0.1).max(0.05) * 2.0,
             );
-            let centre = transform.translation.xy().adjust_precision();
-            let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+            let centre = body_position(position, transform);
+            let filter = SpatialQueryFilter::from_excluded_entities([entity]).with_mask(cfg.mask);
             spatial_query
                 .shape_intersections(&stand_box, centre, 0.0, &filter)
                 .is_empty()
@@ -518,57 +612,130 @@ fn handle_jump(mut query: Query<(&ControllerConfig, &ControllerInput, &mut Contr
     }
 }
 
+/// One controller's move, gathered before [`MoveAndSlide`] is borrowed.
+///
+/// The split exists because [`MoveAndSlide`] reads every collider's [`Position`], which conflicts
+/// with the `&mut Position` the writeback needs. Gathering into a reused buffer, computing, then
+/// writing back through a [`ParamSet`] keeps the three accesses disjoint without allocating per
+/// frame.
+struct MoveRequest {
+    entity: Entity,
+    origin: Vector,
+    offset: Vector,
+    half: Vector,
+    velocity: Vector,
+    mask: LayerMask,
+    max_ground_angle: Scalar,
+    iterations: usize,
+}
+
+/// The outcome of one [`MoveRequest`], applied in the writeback pass.
+struct MoveResult {
+    entity: Entity,
+    position: Vector,
+    /// Velocity correction along `up`, or `None` when nothing vertical was hit.
+    vertical_correction: Option<Scalar>,
+}
+
 /// Moves each controller with avian's move-and-slide and corrects velocity on ground/ceiling
 /// contact so it doesn't accumulate into surfaces.
 fn do_move_and_slide(
-    mut query: Query<
-        (Entity, &ControllerConfig, &ControllerState, &mut Transform, &mut LinearVelocity),
-        With<KinematicController>,
-    >,
-    move_and_slide: MoveAndSlide,
+    mut params: ParamSet<(
+        Query<
+            (
+                Entity,
+                &ControllerConfig,
+                &ControllerState,
+                &LinearVelocity,
+                Option<&Position>,
+                &Transform,
+            ),
+            With<KinematicController>,
+        >,
+        MoveAndSlide,
+        Query<
+            (Option<&mut Position>, &mut Transform, &mut LinearVelocity),
+            With<KinematicController>,
+        >,
+    )>,
     time: Res<Time>,
+    mut requests: Local<Vec<MoveRequest>>,
+    mut results: Local<Vec<MoveResult>>,
 ) {
-    for (entity, cfg, state, mut transform, mut vel) in &mut query {
-        let up = Vector::Y;
-        let mut hit_ground_or_ceiling = false;
+    let delta = time.delta();
+    let up = Vector::Y;
 
-        let config = MoveAndSlideConfig {
-            move_and_slide_iterations: cfg.max_slide_iterations,
-            ..default()
+    // 1. Gather. Use the current pose so a ducked body fits through low gaps: the body position
+    //    is the standing centre, so move-and-slide runs on a box shifted down by the pose offset
+    //    and the result is shifted back up.
+    requests.clear();
+    for (entity, cfg, state, vel, position, transform) in params.p0().iter() {
+        let ducked = state.ducked();
+        requests.push(MoveRequest {
+            entity,
+            origin: body_position(position, transform),
+            offset: Vector::Y * cfg.pose_offset(ducked),
+            half: cfg.pose_half_extents(ducked),
+            velocity: vel.0,
+            mask: cfg.mask,
+            max_ground_angle: cfg.max_ground_angle,
+            iterations: cfg.max_slide_iterations,
+        });
+    }
+
+    // 2. Solve.
+    results.clear();
+    {
+        let move_and_slide = params.p1();
+        for request in requests.iter() {
+            let mut hit_ground_or_ceiling = false;
+            let config = MoveAndSlideConfig {
+                move_and_slide_iterations: request.iterations,
+                ..default()
+            };
+
+            let MoveAndSlideOutput {
+                position,
+                projected_velocity,
+            } = move_and_slide.move_and_slide(
+                &Collider::rectangle(request.half.x * 2.0, request.half.y * 2.0),
+                request.origin + request.offset,
+                0.0,
+                request.velocity,
+                delta,
+                &config,
+                &SpatialQueryFilter::from_excluded_entities([request.entity])
+                    .with_mask(request.mask),
+                |hit| {
+                    let angle = up.angle_to(hit.normal.adjust_precision()).abs();
+                    if angle <= request.max_ground_angle
+                        || angle >= PI - request.max_ground_angle
+                    {
+                        hit_ground_or_ceiling = true;
+                    }
+                    MoveAndSlideHitResponse::Accept
+                },
+            );
+
+            results.push(MoveResult {
+                entity: request.entity,
+                position: position - request.offset,
+                // Cancel accumulated velocity into the surface we hit vertically.
+                vertical_correction: hit_ground_or_ceiling
+                    .then(|| projected_velocity.dot(up) - request.velocity.dot(up)),
+            });
+        }
+    }
+
+    // 3. Write back.
+    let mut bodies = params.p2();
+    for result in results.iter() {
+        let Ok((position, mut transform, mut vel)) = bodies.get_mut(result.entity) else {
+            continue;
         };
-
-        // Use the current pose so a ducked body fits through low gaps. The transform is the
-        // standing centre, so move-and-slide runs on a box shifted down by the pose offset, and
-        // we shift the result back up.
-        let half = cfg.pose_half_extents(state.ducked());
-        let offset = Vector::Y * cfg.pose_offset(state.ducked());
-        let MoveAndSlideOutput {
-            position,
-            projected_velocity,
-        } = move_and_slide.move_and_slide(
-            &Collider::rectangle(half.x * 2.0, half.y * 2.0),
-            transform.translation.xy().adjust_precision() + offset,
-            0.0,
-            vel.0,
-            time.delta(),
-            &config,
-            &SpatialQueryFilter::from_excluded_entities([entity]),
-            |hit| {
-                let angle = up.angle_to(hit.normal.adjust_precision()).abs();
-                if angle <= cfg.max_ground_angle || angle >= PI - cfg.max_ground_angle {
-                    hit_ground_or_ceiling = true;
-                }
-                MoveAndSlideHitResponse::Accept
-            },
-        );
-
-        transform.translation = (position - offset).f32().extend(transform.translation.z);
-
-        // Cancel accumulated velocity into the surface we hit vertically.
-        if hit_ground_or_ceiling {
-            let along_up = vel.dot(up);
-            let new_along_up = projected_velocity.dot(up);
-            vel.0 += (new_along_up - along_up) * up;
+        set_body_position(position, &mut transform, result.position);
+        if let Some(correction) = result.vertical_correction {
+            vel.0 += correction * up;
         }
     }
 }

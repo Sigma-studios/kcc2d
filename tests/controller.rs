@@ -20,7 +20,7 @@ fn base_app() -> App {
         // Avian's diagnostics systems need the resources that this plugin registers.
         bevy::diagnostic::DiagnosticsPlugin,
         PhysicsPlugins::default().with_length_unit(8.0),
-        KccPlugin,
+        KccPlugin::default(),
     ));
     // Advance time by a fixed amount per `update()` so the sim is deterministic.
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(DT)));

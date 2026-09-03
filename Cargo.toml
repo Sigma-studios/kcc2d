@@ -11,10 +11,18 @@ avian2d = { version = "0.7", default-features = false, features = [
     "f32",
     "parry-f32",
 ] }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 # Enables the gizmo + on-screen readout debug plugin (`KccDebugPlugin`).
 debug = ["bevy/bevy_ui", "bevy/default_font"]
+# Derives `Serialize`/`Deserialize` on the controller's components.
+#
+# `ControllerState` is not only animation data: `coyote`, `jump_buffer`, `wall_lockout` and
+# `prev_crouch` decide whether the next jump fires and whether a crouch press starts a slide.
+# A rollback network has to carry them in its snapshots, or every correction quietly resets the
+# character's buffered input and edge detection.
+serde = ["dep:serde", "avian2d/serialize"]
 
 [[example]]
 name = "playground"

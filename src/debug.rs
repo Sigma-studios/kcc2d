@@ -25,8 +25,11 @@ impl Plugin for KccDebugPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_debug,
-                    // Gizmos require a renderer; skip when running headless (e.g. tests).
+                    // Both of these need something a headless app does not have: keyboard input
+                    // needs `InputPlugin`, gizmos need a renderer. A consumer running the
+                    // controller in a simulation test has neither, and a missing resource is a
+                    // panic rather than a skipped system.
+                    toggle_debug.run_if(resource_exists::<ButtonInput<KeyCode>>),
                     draw_gizmos.run_if(resource_exists::<GizmoConfigStore>),
                     update_readout,
                 ),

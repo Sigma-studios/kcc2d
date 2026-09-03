@@ -15,7 +15,7 @@ fn main() {
         .add_plugins((
             DefaultPlugins.set(ImagePlugin::default_nearest()),
             PhysicsPlugins::default().with_length_unit(8.0),
-            KccPlugin,
+            KccPlugin::default(),
         ))
         .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.12)))
         // This example showcases the debug overlay, so start with it on (Tab toggles it).
