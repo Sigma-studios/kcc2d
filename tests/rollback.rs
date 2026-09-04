@@ -88,6 +88,8 @@ fn scripted_input(tick: u64) -> ControllerInput {
             1.0
         },
         jump: matches!(tick, 25 | 55 | 95),
+        // Held for a dozen ticks after each press, so the script covers a released jump too.
+        jump_held: matches!(tick, 25..=37 | 55..=67 | 95..=107),
         crouch: (75..90).contains(&tick),
     }
 }

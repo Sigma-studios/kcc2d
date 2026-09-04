@@ -77,11 +77,42 @@ fn state(app: &App, e: Entity) -> ControllerState {
     app.world().get::<ControllerState>(e).unwrap().clone()
 }
 
+/// `jump` is both the press latch and the hold: a test that wants a jump wants a full one unless
+/// it says otherwise, and the ones that care about the difference set the hold themselves.
 fn set_input(app: &mut App, e: Entity, move_x: f32, jump: bool, crouch: bool) {
     let mut input = app.world_mut().get_mut::<ControllerInput>(e).unwrap();
     input.move_x = move_x;
     input.jump = jump;
+    input.jump_held = jump;
     input.crouch = crouch;
+}
+
+fn set_jump_held(app: &mut App, e: Entity, held: bool) {
+    app.world_mut()
+        .get_mut::<ControllerInput>(e)
+        .unwrap()
+        .jump_held = held;
+}
+
+/// Rest on the floor, jump, hold the button for `hold` frames, and let go. Returns the peak
+/// height above the resting height.
+fn jump_peak(hold: usize) -> f32 {
+    let (mut app, player) = test_app();
+    step(&mut app, 240);
+    let resting = y(&app, player);
+
+    let mut peak = resting;
+    set_input(&mut app, player, 0.0, true, false);
+    for _ in 0..hold {
+        app.update();
+        peak = peak.max(y(&app, player));
+    }
+    set_input(&mut app, player, 0.0, false, false);
+    for _ in 0..60 {
+        app.update();
+        peak = peak.max(y(&app, player));
+    }
+    peak - resting
 }
 
 fn y(app: &App, e: Entity) -> f32 {
@@ -591,5 +622,48 @@ fn sliding_passes_under_low_ceiling() {
         x(&app, player) > 40.0,
         "a sliding character should pass under the low tunnel (x = {})",
         x(&app, player)
+    );
+}
+
+#[test]
+fn jump_height_follows_how_long_the_button_is_held() {
+    let tap = jump_peak(1);
+    let half = jump_peak(8);
+    let full = jump_peak(40);
+
+    assert!(
+        tap < half && half < full,
+        "longer holds should jump higher: tap {tap:.1}, half {half:.1}, full {full:.1}"
+    );
+    assert!(tap > 3.0, "even a tap should clear something ({tap:.1})");
+    // The full arc is the same one the controller always had: `jump_speed` against `gravity`,
+    // which is 150² / (2 · 520) ≈ 21.6 plus a frame or so of integration slack.
+    assert!(
+        (20.0..=25.0).contains(&full),
+        "holding jump should give the old full-height jump, got {full:.1}"
+    );
+}
+
+#[test]
+fn letting_go_of_jump_never_pulls_the_character_down() {
+    // Cutting a jump is heavier gravity while rising, not a velocity reversal: the character
+    // keeps going up, just not as far. A release must never read as a downward shove.
+    let (mut app, player) = test_app();
+    step(&mut app, 240);
+
+    set_input(&mut app, player, 0.0, true, false);
+    app.update();
+    set_jump_held(&mut app, player, false);
+    let before = state(&app, player).velocity.y;
+    app.update();
+    let after = state(&app, player).velocity.y;
+
+    assert!(
+        before > 0.0 && after > 0.0,
+        "should still be rising ({before} -> {after})"
+    );
+    assert!(
+        after < before,
+        "release should slow the rise ({before} -> {after})"
     );
 }

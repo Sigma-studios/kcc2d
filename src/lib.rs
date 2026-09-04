@@ -7,6 +7,7 @@
 //! - Acceleration-based horizontal movement with separate ground/air control and friction.
 //! - Gravity with a terminal velocity.
 //! - Ground detection via a downward shape cast, with **coyote time** and a **jump buffer**.
+//! - **Variable jump height**: the jump is as high as the button is held for, up to the full arc.
 //! - **Wall detection** via sideways shape casts, enabling **wall slide** and **wall jump**.
 //! - **Crouch-slide**: holding crouch while moving fast preserves momentum with low friction.
 //!
@@ -157,8 +158,13 @@ pub struct ControllerConfig {
     pub gravity: Scalar,
     /// Maximum downward speed reachable from gravity.
     pub terminal_velocity: Scalar,
-    /// Upward speed applied on a ground jump.
+    /// Upward speed applied on a ground jump. Holding jump for the whole rise gives this arc;
+    /// letting go early ends it sooner — see `jump_release_gravity_scale`.
     pub jump_speed: Scalar,
+    /// Gravity multiplier while rising with jump *not* held. This is what makes jump height
+    /// follow how long the button is down: a tap is a hop, a hold is the full `jump_speed` arc,
+    /// and everything in between is in between. `1.0` turns the variable height off.
+    pub jump_release_gravity_scale: Scalar,
     /// Grace period after leaving the ground during which a jump is still allowed.
     pub coyote_time: Scalar,
     /// How long a jump press is remembered while airborne, so it fires on landing.
@@ -207,6 +213,7 @@ impl Default for ControllerConfig {
             gravity: 520.0,
             terminal_velocity: 220.0,
             jump_speed: 150.0,
+            jump_release_gravity_scale: 2.5,
             coyote_time: 0.09,
             jump_buffer_time: 0.1,
             wall_jump_speed: Vector::new(95.0, 145.0),
@@ -239,6 +246,9 @@ pub struct ControllerInput {
     /// jump and resetting this flag — on the next fixed step. This makes jumps robust to high
     /// frame rates, where a fixed step may not run on the single frame a key is pressed.
     pub jump: bool,
+    /// Whether the jump button is *held*, as opposed to the press edge above. Read while rising:
+    /// letting go cuts the jump short, so height follows the length of the press.
+    pub jump_held: bool,
     /// Whether crouch is held. Pressing it while running fast on the ground starts a slide.
     pub crouch: bool,
 }
@@ -528,7 +538,7 @@ fn update_pose(
     }
 }
 
-/// Applies gravity, and clamps fall speed while wall-sliding.
+/// Applies gravity, cuts a released jump short, and clamps fall speed while wall-sliding.
 fn apply_gravity(
     time: Res<Time>,
     mut query: Query<(
@@ -541,7 +551,14 @@ fn apply_gravity(
     let dt = time.delta_secs().adjust_precision();
     for (cfg, input, mut state, mut vel) in &mut query {
         if !state.grounded {
-            vel.y = (vel.y - cfg.gravity * dt).max(-cfg.terminal_velocity);
+            // Rising with the button up: heavier gravity, so the arc ends where the press did.
+            // Holding it gives plain gravity and the full `jump_speed` height.
+            let gravity = if vel.y > 0.0 && !input.jump_held {
+                cfg.gravity * cfg.jump_release_gravity_scale
+            } else {
+                cfg.gravity
+            };
+            vel.y = (vel.y - gravity * dt).max(-cfg.terminal_velocity);
         } else if vel.y < 0.0 {
             // Small downward bias keeps the ground probe engaged on flat ground.
             vel.y = vel.y.max(-cfg.gravity * dt);

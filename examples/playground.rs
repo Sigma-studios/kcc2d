@@ -95,6 +95,8 @@ fn read_input(
         if keyboard.just_pressed(KeyCode::Space) {
             input.jump = true;
         }
+        // The hold is what decides how high the jump goes.
+        input.jump_held = keyboard.pressed(KeyCode::Space);
         input.crouch = keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
     }
 }
