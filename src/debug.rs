@@ -89,13 +89,21 @@ fn draw_gizmos(
             down_color,
         );
 
-        let left_color = if state.wall == Some(Side::Left) { WALL_SLIDE } else { PROBE };
+        let left_color = if state.wall == Some(Side::Left) {
+            WALL_SLIDE
+        } else {
+            PROBE
+        };
         gizmos.line_2d(
             pos + Vec2::new(-he.x, 0.0),
             pos + Vec2::new(-he.x - d, 0.0),
             left_color,
         );
-        let right_color = if state.wall == Some(Side::Right) { WALL_SLIDE } else { PROBE };
+        let right_color = if state.wall == Some(Side::Right) {
+            WALL_SLIDE
+        } else {
+            PROBE
+        };
         gizmos.line_2d(
             pos + Vec2::new(he.x, 0.0),
             pos + Vec2::new(he.x + d, 0.0),

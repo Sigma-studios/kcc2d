@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "debug")]
 mod debug;
 #[cfg(feature = "debug")]
-pub use debug::{KccDebug, KccDebugPlugin};
+pub use debug::{KccDebug, KccDebugPlugin, TOGGLE_KEY};
 
 /// System set containing every controller system, in whichever schedule [`KccPlugin`] was given.
 /// Order your own input-writing systems before this set and animation/read systems after it.
@@ -405,10 +405,10 @@ fn detect_contacts(
         let horizontal = Collider::rectangle(half.x * 2.0, (half.y - skin).max(0.05) * 2.0);
 
         // Ground: cast the narrow box straight down.
-        let ground = spatial_query.cast_shape(&vertical, origin, 0.0, Dir2::NEG_Y, &config, &filter);
-        state.grounded = ground.is_some_and(|hit| {
-            Vector::Y.angle_to(hit.normal1).abs() <= cfg.max_ground_angle
-        });
+        let ground =
+            spatial_query.cast_shape(&vertical, origin, 0.0, Dir2::NEG_Y, &config, &filter);
+        state.grounded =
+            ground.is_some_and(|hit| Vector::Y.angle_to(hit.normal1).abs() <= cfg.max_ground_angle);
         state.ground_normal = ground
             .filter(|_| state.grounded)
             .map_or(Vector::Y, |hit| hit.normal1);
@@ -431,7 +431,14 @@ fn detect_contacts(
 }
 
 /// Advances coyote time, jump buffering, and wall-jump lockout.
-fn tick_timers(time: Res<Time>, mut query: Query<(&ControllerConfig, &mut ControllerInput, &mut ControllerState)>) {
+fn tick_timers(
+    time: Res<Time>,
+    mut query: Query<(
+        &ControllerConfig,
+        &mut ControllerInput,
+        &mut ControllerState,
+    )>,
+) {
     let dt = time.delta_secs().adjust_precision();
     for (cfg, mut input, mut state) in &mut query {
         if state.grounded {
@@ -524,7 +531,12 @@ fn update_pose(
 /// Applies gravity, and clamps fall speed while wall-sliding.
 fn apply_gravity(
     time: Res<Time>,
-    mut query: Query<(&ControllerConfig, &ControllerInput, &mut ControllerState, &mut LinearVelocity)>,
+    mut query: Query<(
+        &ControllerConfig,
+        &ControllerInput,
+        &mut ControllerState,
+        &mut LinearVelocity,
+    )>,
 ) {
     let dt = time.delta_secs().adjust_precision();
     for (cfg, input, mut state, mut vel) in &mut query {
@@ -552,7 +564,12 @@ fn apply_gravity(
 /// Horizontal acceleration, friction, and slide/crouch handling.
 fn horizontal_movement(
     time: Res<Time>,
-    mut query: Query<(&ControllerConfig, &ControllerInput, &mut ControllerState, &mut LinearVelocity)>,
+    mut query: Query<(
+        &ControllerConfig,
+        &ControllerInput,
+        &mut ControllerState,
+        &mut LinearVelocity,
+    )>,
 ) {
     let dt = time.delta_secs().adjust_precision();
     for (cfg, input, mut state, mut vel) in &mut query {
@@ -563,7 +580,11 @@ fn horizontal_movement(
 
         let control = if state.grounded { 1.0 } else { cfg.air_control };
         // Crouching caps the speed; sliding and standing use the full run speed.
-        let max_speed = if state.crouching { cfg.crouch_speed } else { cfg.max_speed };
+        let max_speed = if state.crouching {
+            cfg.crouch_speed
+        } else {
+            cfg.max_speed
+        };
 
         if state.sliding {
             // Preserve momentum: only gentle friction, no input acceleration.
@@ -571,7 +592,11 @@ fn horizontal_movement(
         } else if input.move_x != 0.0 {
             let target = input.move_x.clamp(-1.0, 1.0) * max_speed;
             vel.x = approach(vel.x, target, cfg.accel * control * dt);
-            state.facing = if input.move_x > 0.0 { Side::Right } else { Side::Left };
+            state.facing = if input.move_x > 0.0 {
+                Side::Right
+            } else {
+                Side::Left
+            };
         } else {
             vel.x = approach(vel.x, 0.0, cfg.ground_friction * control * dt);
         }
@@ -579,7 +604,14 @@ fn horizontal_movement(
 }
 
 /// Ground jumps (with coyote/buffer) and wall jumps.
-fn handle_jump(mut query: Query<(&ControllerConfig, &ControllerInput, &mut ControllerState, &mut LinearVelocity)>) {
+fn handle_jump(
+    mut query: Query<(
+        &ControllerConfig,
+        &ControllerInput,
+        &mut ControllerState,
+        &mut LinearVelocity,
+    )>,
+) {
     for (cfg, input, mut state, mut vel) in &mut query {
         if state.jump_buffer <= 0.0 {
             continue;
@@ -605,7 +637,11 @@ fn handle_jump(mut query: Query<(&ControllerConfig, &ControllerInput, &mut Contr
 
             vel.x = away * cfg.wall_jump_speed.x * scale;
             vel.y = cfg.wall_jump_speed.y;
-            state.facing = if side == Side::Left { Side::Right } else { Side::Left };
+            state.facing = if side == Side::Left {
+                Side::Right
+            } else {
+                Side::Left
+            };
             state.wall_lockout = cfg.wall_jump_lockout;
             state.jump_buffer = 0.0;
         }
@@ -708,9 +744,7 @@ fn do_move_and_slide(
                     .with_mask(request.mask),
                 |hit| {
                     let angle = up.angle_to(hit.normal.adjust_precision()).abs();
-                    if angle <= request.max_ground_angle
-                        || angle >= PI - request.max_ground_angle
-                    {
+                    if angle <= request.max_ground_angle || angle >= PI - request.max_ground_angle {
                         hit_ground_or_ceiling = true;
                     }
                     MoveAndSlideHitResponse::Accept

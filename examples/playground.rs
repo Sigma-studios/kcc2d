@@ -82,7 +82,10 @@ fn spawn_solid(commands: &mut Commands, center: Vec2, size: Vec2) {
     ));
 }
 
-fn read_input(keyboard: Res<ButtonInput<KeyCode>>, mut query: Query<&mut ControllerInput, With<Player>>) {
+fn read_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut ControllerInput, With<Player>>,
+) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 

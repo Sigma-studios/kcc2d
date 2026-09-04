@@ -23,7 +23,9 @@ fn base_app() -> App {
         KccPlugin::default(),
     ));
     // Advance time by a fixed amount per `update()` so the sim is deterministic.
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(DT)));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+        DT,
+    )));
     app
 }
 
@@ -119,7 +121,10 @@ fn runs_horizontally_on_input() {
     step(&mut app, 60);
 
     let moved = x(&app, player) - start_x;
-    assert!(moved > 5.0, "character should have moved right, delta was {moved}");
+    assert!(
+        moved > 5.0,
+        "character should have moved right, delta was {moved}"
+    );
     assert_eq!(state(&app, player).facing, Side::Right);
 }
 
@@ -162,7 +167,10 @@ fn jump_latch_is_consumed_once() {
     app.update();
 
     // The controller must have consumed (cleared) the latch on the first fixed step.
-    assert!(!jump_flag(&app, player), "controller should clear the jump latch");
+    assert!(
+        !jump_flag(&app, player),
+        "controller should clear the jump latch"
+    );
 
     // It rises...
     let mut max_y = y(&app, player);
@@ -219,7 +227,10 @@ fn coyote_time_allows_a_late_jump() {
         app.update();
         peak = peak.max(y(&app, player));
     }
-    assert!(peak > y0 + 3.0, "coyote jump should lift the character (peak {peak}, y0 {y0})");
+    assert!(
+        peak > y0 + 3.0,
+        "coyote jump should lift the character (peak {peak}, y0 {y0})"
+    );
 }
 
 #[test]
@@ -276,13 +287,19 @@ fn slide_decays_into_crouch_without_flicker() {
     // Build up speed to the right.
     set_input(&mut app, player, 1.0, false, false);
     step(&mut app, 90);
-    assert!(state(&app, player).velocity.x > 20.0, "should be running fast");
+    assert!(
+        state(&app, player).velocity.x > 20.0,
+        "should be running fast"
+    );
 
     // Press crouch (edge) while fast -> slide starts.
     set_input(&mut app, player, 1.0, false, true);
     app.update();
     let s = state(&app, player);
-    assert!(s.sliding && !s.crouching, "crouch press while fast should start a slide");
+    assert!(
+        s.sliding && !s.crouching,
+        "crouch press while fast should start a slide"
+    );
 
     // Keep crouch + right held while speed decays: it must stay ducked the whole time (never
     // flicker up to standing/run) and eventually settle into a controllable crouch.
@@ -290,17 +307,29 @@ fn slide_decays_into_crouch_without_flicker() {
     for _ in 0..180 {
         app.update();
         let s = state(&app, player);
-        assert!(s.ducked(), "must stay ducked while crouch is held on the ground");
+        assert!(
+            s.ducked(),
+            "must stay ducked while crouch is held on the ground"
+        );
         became_crouch |= s.crouching;
     }
-    assert!(became_crouch, "a slide that runs out of momentum should become a crouch");
+    assert!(
+        became_crouch,
+        "a slide that runs out of momentum should become a crouch"
+    );
     let s = state(&app, player);
-    assert!(s.crouching && !s.sliding, "should end up crouching, not sliding");
+    assert!(
+        s.crouching && !s.sliding,
+        "should end up crouching, not sliding"
+    );
 
     // Releasing crouch (with headroom) stands back up.
     set_input(&mut app, player, 0.0, false, false);
     step(&mut app, 3);
-    assert!(!state(&app, player).ducked(), "releasing crouch should stand up");
+    assert!(
+        !state(&app, player).ducked(),
+        "releasing crouch should stand up"
+    );
 }
 
 #[test]
@@ -334,7 +363,10 @@ fn crouch_from_standstill_then_walk() {
     set_input(&mut app, player, 0.0, false, true);
     app.update();
     let s = state(&app, player);
-    assert!(s.crouching && !s.sliding, "crouch from a standstill should crouch, not slide");
+    assert!(
+        s.crouching && !s.sliding,
+        "crouch from a standstill should crouch, not slide"
+    );
 
     // Move while holding crouch -> crouch-walk, capped at the (slow) crouch speed.
     set_input(&mut app, player, 1.0, false, true);
@@ -350,7 +382,10 @@ fn crouch_from_standstill_then_walk() {
     // Release crouch (with headroom) -> stand up.
     set_input(&mut app, player, 1.0, false, false);
     step(&mut app, 3);
-    assert!(!state(&app, player).crouching, "releasing crouch should stand up");
+    assert!(
+        !state(&app, player).crouching,
+        "releasing crouch should stand up"
+    );
 }
 
 #[test]
@@ -371,7 +406,10 @@ fn stays_crouched_under_a_low_ceiling_until_clear() {
         }
     }
     assert!(under, "should have crouch-walked under the ceiling");
-    assert!(state(&app, player).crouching, "should be crouching under the ceiling");
+    assert!(
+        state(&app, player).crouching,
+        "should be crouching under the ceiling"
+    );
 
     // Release crouch while still under the ceiling: can't stand (no headroom), stays crouched.
     set_input(&mut app, player, 0.0, false, false);
@@ -415,7 +453,11 @@ fn wall_slides_then_wall_jumps() {
     let (mut app, player) = wall_sliding_app();
 
     let s = state(&app, player);
-    assert_eq!(s.wall, Some(Side::Right), "wall should be detected on the right");
+    assert_eq!(
+        s.wall,
+        Some(Side::Right),
+        "wall should be detected on the right"
+    );
     assert!(s.wall_sliding, "character should be wall-sliding");
     // Fall speed is clamped to `wall_slide_speed` (default 40) while wall-sliding.
     assert!(
@@ -436,24 +478,41 @@ fn wall_slides_then_wall_jumps() {
         x(&app, player) < x_before,
         "wall jump should push the character away from the wall (left)"
     );
-    assert_eq!(s.facing, Side::Left, "should face away from the wall after wall jump");
+    assert_eq!(
+        s.facing,
+        Side::Left,
+        "should face away from the wall after wall jump"
+    );
 }
 
 #[test]
 fn wall_clings_while_ascending_but_only_slides_while_descending() {
     let (mut app, player) = wall_sliding_app();
     let s = state(&app, player);
-    assert!(s.wall_clinging && s.wall_sliding, "should cling and slide while descending");
+    assert!(
+        s.wall_clinging && s.wall_sliding,
+        "should cling and slide while descending"
+    );
 
     // Force upward motion while still pressing into the wall.
-    app.world_mut().get_mut::<LinearVelocity>(player).unwrap().0.y = 120.0;
+    app.world_mut()
+        .get_mut::<LinearVelocity>(player)
+        .unwrap()
+        .0
+        .y = 120.0;
     set_input(&mut app, player, 1.0, false, false); // keep pushing into the (right) wall
     app.update();
 
     let s = state(&app, player);
     assert!(s.velocity.y > 0.0, "should be moving up");
-    assert!(s.wall_clinging, "wall pose should show while ascending against the wall");
-    assert!(!s.wall_sliding, "the fall-speed clamp should not apply while ascending");
+    assert!(
+        s.wall_clinging,
+        "wall pose should show while ascending against the wall"
+    );
+    assert!(
+        !s.wall_sliding,
+        "the fall-speed clamp should not apply while ascending"
+    );
 }
 
 #[test]
@@ -514,12 +573,18 @@ fn sliding_passes_under_low_ceiling() {
     // Build up speed while still clear of the tunnel...
     set_input(&mut app, player, 1.0, false, false);
     step(&mut app, 8);
-    assert!(state(&app, player).velocity.x > 40.0, "should be moving fast before the tunnel");
+    assert!(
+        state(&app, player).velocity.x > 40.0,
+        "should be moving fast before the tunnel"
+    );
 
     // ...then slide (crouch press edge) and glide through the ducked-only gap.
     set_input(&mut app, player, 1.0, false, true);
     app.update();
-    assert!(state(&app, player).sliding, "crouch press while fast should start a slide");
+    assert!(
+        state(&app, player).sliding,
+        "crouch press while fast should start a slide"
+    );
     step(&mut app, 150);
 
     assert!(
