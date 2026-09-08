@@ -41,7 +41,7 @@ pub struct KccSet;
 /// [`KccPlugin::new`] to run the controller in another schedule — a rollback simulation owns its
 /// own, re-runs it many times per frame while replaying, and cannot use `FixedUpdate` at all:
 ///
-/// ```rust,ignore
+/// ```text
 /// app.add_plugins(KccPlugin::new(TickedSimulation));
 /// // and, so the controller still runs before the physics step as it does under FixedUpdate:
 /// app.configure_sets(TickedSimulation, KccSet.in_set(PhysicsSystems::First));
