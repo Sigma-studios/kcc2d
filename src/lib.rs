@@ -513,10 +513,14 @@ fn update_pose(
                 .is_empty()
         };
 
-        // A slide ends when it leaves the ground, crouch is released, or momentum runs out;
-        // when momentum runs out (still crouching) it becomes a controllable crouch.
+        // A slide ends when it leaves the ground, crouch is released, or momentum runs out. It
+        // ends into a crouch if crouch is still held — or if there is no headroom to stand in,
+        // whatever the keys say. Standing is a 7px box where a 3px one was: with a ceiling in the
+        // way the body comes up already overlapping it, and move-and-slide resolves that overlap
+        // the only way it can, by shoving the body down — 3.5px in one frame, into the floor.
+        // Letting go of crouch under a gate, or sliding off a ledge under one, both did this.
         if state.sliding && (!grounded || !input.crouch || vel.x.abs() <= cfg.crouch_speed) {
-            let keep_ducked = grounded && input.crouch;
+            let keep_ducked = (grounded && input.crouch) || !can_stand;
             state.sliding = false;
             state.crouching = keep_ducked;
         }

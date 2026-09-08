@@ -667,3 +667,135 @@ fn letting_go_of_jump_never_pulls_the_character_down() {
         "release should slow the rise ({before} -> {after})"
     );
 }
+
+#[test]
+fn releasing_crouch_mid_slide_under_a_low_ceiling_drops_into_a_crouch() {
+    // The other way a slide ends under a ceiling: not running out of momentum, but the player
+    // letting go of crouch while still underneath. There is no headroom, so this has to become a
+    // crouch, not a stand — a body stood up into the ceiling is overlapping it, and move-and-slide
+    // resolves that by shoving it down into the floor.
+    let (mut app, player) = tunnel_app(); // ceiling at x in [20, 36], underside at y = 4
+    step(&mut app, 120); // land
+    let resting = y(&app, player);
+
+    set_input(&mut app, player, 1.0, false, false);
+    step(&mut app, 8);
+    set_input(&mut app, player, 1.0, false, true);
+    app.update();
+    assert!(state(&app, player).sliding, "should be sliding");
+
+    // Slide until well under the ceiling, still with momentum.
+    let mut under = false;
+    for _ in 0..120 {
+        app.update();
+        if (24.0..32.0).contains(&x(&app, player)) {
+            under = true;
+            break;
+        }
+    }
+    assert!(
+        under,
+        "should have slid under the ceiling (x = {})",
+        x(&app, player)
+    );
+    assert!(
+        state(&app, player).sliding,
+        "should still be sliding when the keys are let go"
+    );
+
+    // Let go of everything with 4px of headroom.
+    set_input(&mut app, player, 0.0, false, false);
+    for _ in 0..30 {
+        app.update();
+        let s = state(&app, player);
+        assert!(
+            s.ducked(),
+            "no headroom: must stay ducked, not stand up into the ceiling (x = {})",
+            x(&app, player)
+        );
+        assert!(
+            y(&app, player) > resting - 0.5,
+            "body was pushed into the floor: y = {} against a resting {}",
+            y(&app, player),
+            resting
+        );
+    }
+    assert!(
+        state(&app, player).crouching,
+        "a slide that ends with no headroom should have become a crouch"
+    );
+
+    // Walk out from under it, and it stands.
+    set_input(&mut app, player, 1.0, false, false);
+    for _ in 0..400 {
+        app.update();
+        if !state(&app, player).crouching {
+            break;
+        }
+    }
+    assert!(
+        !state(&app, player).crouching && x(&app, player) > 36.0,
+        "should stand up once past the ceiling (x = {})",
+        x(&app, player)
+    );
+}
+
+#[test]
+fn sliding_off_a_ledge_under_a_low_ceiling_stays_ducked() {
+    // The third way a slide ends: leaving the ground. Here the floor stops halfway through the
+    // tunnel, so the slider drops off the edge with the ceiling still overhead and must not stand
+    // up into it on the way down.
+    let mut app = base_app();
+    spawn_solid(&mut app, Vec2::new(-86.0, -6.0), Vec2::new(228.0, 12.0)); // floor, x in [-200, 28]
+    spawn_solid(&mut app, Vec2::new(28.0, 24.0), Vec2::new(16.0, 40.0)); // ceiling, underside y = 4
+    spawn_solid(&mut app, Vec2::new(100.0, -26.0), Vec2::new(144.0, 12.0)); // lower floor, top y = -20
+    let player = spawn_player_at(&mut app, Vec2::new(0.0, 20.0));
+    finalize(&mut app);
+    step(&mut app, 120); // land
+
+    set_input(&mut app, player, 1.0, false, false);
+    step(&mut app, 8);
+    set_input(&mut app, player, 1.0, false, true);
+    app.update();
+    assert!(state(&app, player).sliding, "should be sliding");
+
+    let mut fell = false;
+    let mut previous_y = y(&app, player);
+    for _ in 0..240 {
+        app.update();
+        let s = state(&app, player);
+        let (px, py) = (x(&app, player), y(&app, player));
+        // The pose is decided from where the body *was*: standing there would have put its top
+        // (3.5 above the centre) into a ceiling whose underside is at 4, so it has to stay ducked.
+        if (20.0..36.0).contains(&px) && previous_y + 3.5 > 4.1 {
+            assert!(
+                s.ducked(),
+                "stood up under the ceiling at x = {px:.1}, y = {py:.1}"
+            );
+        }
+        // And it falls at the speed it falls: the bug was a 3.5px shove in a single frame. The
+        // harness steps 1/60 s per update while the controller runs at Bevy's fixed 64 Hz, so an
+        // update may run two fixed steps; the bound allows for both.
+        let fallen = previous_y - py;
+        let plausible = s.velocity.y.abs() * 2.0 / 64.0 + 0.25;
+        assert!(
+            fallen <= plausible,
+            "body dropped {fallen:.2}px in one frame at x = {px:.1} (vy = {:.1}): that is a \
+             shove out of the ceiling, not falling",
+            s.velocity.y
+        );
+        previous_y = py;
+        if !s.grounded {
+            fell = true;
+        }
+        if fell && s.grounded && px > 36.0 {
+            break;
+        }
+    }
+    assert!(fell, "should have slid off the ledge");
+    assert!(
+        state(&app, player).grounded && y(&app, player) < 0.0,
+        "should have landed on the lower floor (y = {})",
+        y(&app, player)
+    );
+}
