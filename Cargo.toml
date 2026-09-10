@@ -1,6 +1,9 @@
 [package]
 name = "kcc2d"
 description = "A reusable 2D kinematic character controller for Bevy, built on avian2d."
+authors = ["Sigma <antonin.programming@gmail.com>"]
+repository = "https://github.com/Sigma-studios/kcc2d"
+license = "MIT OR Apache-2.0"
 version = "0.1.0"
 edition = "2024"
 
@@ -29,6 +32,35 @@ name = "playground"
 # The playground showcases the controller with the debug overlay enabled.
 required-features = ["debug"]
 
+[dev-dependencies]
+# The playground is a real windowed app, so it needs Bevy's defaults — a window, winit, a
+# renderer. The library itself stays on `2d` alone, so a game depending on `kcc2d` picks its own
+# Bevy feature set rather than inheriting one. (The headless tests need none of this: they run on
+# `MinimalPlugins`.)
+bevy = { version = "0.19" }
+
 [lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+
+# Enable a small amount of optimization in the dev profile — a physics test that runs a thousand
+# steps is unbearable otherwise.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Remove expensive debug assertions due to <https://github.com/bevyengine/bevy/issues/14291>
+[profile.dev.package.wgpu-types]
+debug-assertions = false
+
+# Optimize for build time in CI.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = "line-tables-only"
+codegen-units = 4
+
+[profile.ci.package."*"]
+opt-level = 0
